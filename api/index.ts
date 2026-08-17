@@ -1,14 +1,17 @@
 import http from 'node:http';
-import express from 'express';
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
 
-const originalGet = express.application.get;
-express.application.get = function (...args: any[]) {
-  if (args[0] === '*') return this;
-  return originalGet.apply(this, args as any);
-} as typeof express.application.get;
+const runtimeRoot = '/tmp/gods-favor-pharmacy';
+fs.mkdirSync(runtimeRoot, { recursive: true });
 
-let capturedServer: http.Server | undefined;
+const originalCwd = process.cwd;
 const originalListen = http.Server.prototype.listen;
+let capturedServer: http.Server | undefined;
+
+process.env.NODE_ENV = 'production';
+process.cwd = () => runtimeRoot;
+
 http.Server.prototype.listen = function (...args: any[]) {
   capturedServer = this;
   const callback = args[args.length - 1];
@@ -20,12 +23,13 @@ http.Server.prototype.listen = function (...args: any[]) {
 } as typeof http.Server.prototype.listen;
 
 try {
-  // The existing build produces dist/server.cjs. Loading that compiled
-  // CommonJS entrypoint avoids Vercel's ESM directory-resolution failure.
-  await import('../dist/server.cjs');
+  // The normal build creates dist/server.cjs. Load that CommonJS bundle so
+  // Node never attempts the unsupported ESM directory import of ../server.
+  const require = createRequire(import.meta.url);
+  require('../dist/server.cjs');
 } finally {
   http.Server.prototype.listen = originalListen;
-  express.application.get = originalGet;
+  process.cwd = originalCwd;
 }
 
 if (!capturedServer) {
