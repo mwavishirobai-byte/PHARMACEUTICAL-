@@ -15,9 +15,11 @@ jobs:
       - run: npm run build
       - name: Commit hardened source
         run: |
-          rm -f scripts/apply_security_hardening.py .github/workflows/security-hardening-apply.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "${GITHUB_REF_NAME}"
+          git rebase "origin/${GITHUB_REF_NAME}"
+          rm -f scripts/apply_security_hardening.py .github/workflows/security-hardening-apply.yml
           git add -A
           git commit -m "security: harden pharmacy authentication and order access" || exit 0
           git push origin HEAD:${GITHUB_REF_NAME}
