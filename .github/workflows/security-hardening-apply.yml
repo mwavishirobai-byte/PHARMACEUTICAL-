@@ -1,28 +1,18 @@
 name: Apply pharmacy security hardening
-
-on:
-  push:
-    branches:
-      - security-hardening-2026-08-18
-
+on: push
 permissions:
   contents: write
-
 jobs:
   harden:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Apply security hardening
-        run: python3 scripts/apply_security_hardening.py
-      - name: Install dependencies
-        run: npm install
-      - name: Type-check
-        run: npm run lint
-      - name: Production build
-        run: npm run build
+      - run: python3 scripts/apply_security_hardening.py
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
       - name: Commit hardened source
         run: |
           rm -f scripts/apply_security_hardening.py .github/workflows/security-hardening-apply.yml
@@ -30,4 +20,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "security: harden pharmacy authentication and order access" || exit 0
-          git push origin HEAD:security-hardening-2026-08-18
+          git push origin HEAD:${GITHUB_REF_NAME}
