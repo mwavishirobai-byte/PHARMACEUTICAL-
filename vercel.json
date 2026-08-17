@@ -5,7 +5,7 @@
   "functions": {
     "api/index.ts": {
       "runtime": "nodejs22.x",
-      "includeFiles": ["server.ts", "server/**"]
+      "includeFiles": "server.ts,server/**"
     }
   },
   "rewrites": [
