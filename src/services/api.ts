@@ -246,6 +246,11 @@ export const api = {
     return handleResponse<AuthResponse>(res);
   },
 
+  async logout(): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/auth/logout`, { method: 'POST', headers: getAuthHeaders() });
+    return handleResponse<{ success: boolean; message: string }>(res);
+  },
+
   async getMe(): Promise<{ user: User }> {
     const res = await fetch(`${API_BASE}/auth/me`, {
       headers: getAuthHeaders(),

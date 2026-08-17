@@ -41,8 +41,10 @@ import {
   loginUser,
   verifyToken,
   getUserById,
+  revokeUserTokens,
 } from './server/db';
 import { UserRole } from './src/types';
+import { createRateLimiter } from './server/rateLimiter';
 
 dotenv.config();
 
@@ -55,6 +57,13 @@ const PORT = 3000;
 // Body Parsers with generous payload limit for prescription/payment image uploads (base64)
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+
+app.use('/api/auth/login', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 }));
+app.use('/api/auth/register', createRateLimiter({ windowMs: 15 * 60 * 1000, max: 8 }));
+app.use('/api/payments/submit', createRateLimiter({ windowMs: 10 * 60 * 1000, max: 10 }));
+app.use('/api/contact', createRateLimiter({ windowMs: 10 * 60 * 1000, max: 10 }));
+app.use('/api/ai/health-assistant', createRateLimiter({ windowMs: 5 * 60 * 1000, max: 20 }));
+app.use('/api/orders/track', createRateLimiter({ windowMs: 10 * 60 * 1000, max: 20 }));
 
 // ----------------- AUTHENTICATION MIDDLEWARES -----------------
 
@@ -248,7 +257,7 @@ app.get('/api/orders/track', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Order not found. Please check the order number and phone.' });
     }
 
-    res.json(order);
+    res.json({ id: order.id, orderNumber: order.orderNumber, status: order.status, paymentStatus: order.paymentStatus, fulfillmentMethod: order.fulfillmentMethod, total: order.total, createdAt: order.createdAt, updatedAt: order.updatedAt });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Error tracking order' });
   }
@@ -257,10 +266,10 @@ app.get('/api/orders/track', (req: Request, res: Response) => {
 app.get('/api/orders/:id', authenticateOptional, (req: AuthenticatedRequest, res: Response) => {
   try {
     const order = getOrderByNumberOrId(req.params.id);
-    if (!order) {
-      return res.status(404).json({ error: 'Order not found' });
-    }
-    // Allow if public lookup or owner or staff
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    if (!req.user) return res.status(401).json({ error: 'Authentication required to access order details.' });
+    const isStaff = ['admin', 'pharmacist', 'staff', 'super_admin'].includes(req.user.role);
+    if (!isStaff && order.customerId !== req.user.id) return res.status(403).json({ error: 'Forbidden. You may only access your own orders.' });
     res.json(order);
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Error retrieving order' });
@@ -268,12 +277,14 @@ app.get('/api/orders/:id', authenticateOptional, (req: AuthenticatedRequest, res
 });
 
 // Submit Payment for existing order (Pochi la Biashara)
-app.post('/api/payments/submit', (req: Request, res: Response) => {
+app.post('/api/payments/submit', requireAuth, (req: AuthenticatedRequest, res: Response) => {
   try {
     const { orderId, transactionReference, proofUrl } = req.body;
-    if (!orderId || !transactionReference) {
-      return res.status(400).json({ error: 'Order ID and transaction reference are required.' });
-    }
+    if (!orderId || !transactionReference) return res.status(400).json({ error: 'Order ID and transaction reference are required.' });
+    const targetOrder = getOrderByNumberOrId(orderId);
+    if (!targetOrder) return res.status(404).json({ error: 'Order not found.' });
+    const isStaff = ['admin', 'pharmacist', 'staff', 'super_admin'].includes(req.user!.role);
+    if (!isStaff && targetOrder.customerId !== req.user!.id) return res.status(403).json({ error: 'Forbidden. You may only submit payment for your own order.' });
     const order = submitOrderPayment(orderId, transactionReference, proofUrl);
     res.json({
       success: true,
@@ -438,6 +449,15 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
     res.json(result);
   } catch (err: any) {
     res.status(401).json({ error: err.message || 'Login failed' });
+  }
+});
+
+app.post('/api/auth/logout', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  try {
+    revokeUserTokens(req.user!.id);
+    res.json({ success: true, message: 'Logged out successfully.' });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Logout failed' });
   }
 });
 

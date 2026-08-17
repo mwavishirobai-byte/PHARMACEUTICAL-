@@ -63,9 +63,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const logout = () => {
-    localStorage.removeItem('gfp_auth_token');
-    setToken(null);
-    setUser(null);
+    void api.logout().catch((err) => {
+      console.warn('Server logout request failed; clearing local session anyway:', err);
+    }).finally(() => {
+      localStorage.removeItem('gfp_auth_token');
+      setToken(null);
+      setUser(null);
+    });
   };
 
   return (

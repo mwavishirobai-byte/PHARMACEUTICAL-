@@ -30,10 +30,14 @@ import {
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'pharmacy_database.json');
-const JWT_SECRET = process.env.JWT_SECRET || 'gods-favor-pharmacy-secure-secret-key-kitale-2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be configured as a random server-side secret of at least 32 characters.');
+}
 
 interface UserRecord extends User {
   passwordHash: string;
+  tokenVersion?: number;
 }
 
 interface DatabaseSchema {
@@ -59,32 +63,23 @@ function ensureDataDirExists() {
 }
 
 function getInitialDatabase(): DatabaseSchema {
-  const adminPasswordHash = bcrypt.hashSync('KitaleAdmin2026!', 10);
-  const pharmacistPasswordHash = bcrypt.hashSync('PharmacistKitale2026!', 10);
-
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword || adminPassword.length < 12) {
+    throw new Error('ADMIN_PASSWORD must be configured with at least 12 characters before the pharmacy database can initialize.');
+  }
+  const pharmacistPassword = process.env.PHARMACIST_PASSWORD;
+  const now = new Date().toISOString();
   const initialUsers: UserRecord[] = [
     {
-      id: 'usr-admin-01',
-      fullName: 'Chief Pharmacist / Admin',
-      phone: '07417758578',
-      email: 'admin@godsfavorpharmacy.ke',
-      address: 'Kijana Wamalwa Road, Kitale',
-      role: 'admin',
-      passwordHash: adminPasswordHash,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      id: 'usr-admin-01', fullName: 'Chief Pharmacist / Admin', phone: '07417758578',
+      email: 'admin@godsfavorpharmacy.ke', address: 'Kijana Wamalwa Road, Kitale', role: 'admin',
+      passwordHash: bcrypt.hashSync(adminPassword, 12), tokenVersion: 0, createdAt: now, updatedAt: now,
     },
-    {
-      id: 'usr-pharm-01',
-      fullName: 'Clinical Pharmacist on Duty',
-      phone: '07417758578',
-      email: 'pharmacist@godsfavorpharmacy.ke',
-      address: 'Kitale Town',
-      role: 'pharmacist',
-      passwordHash: pharmacistPasswordHash,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    },
+    ...(pharmacistPassword ? [{
+      id: 'usr-pharm-01', fullName: 'Clinical Pharmacist on Duty', phone: '07417758578',
+      email: 'pharmacist@godsfavorpharmacy.ke', address: 'Kitale Town', role: 'pharmacist' as const,
+      passwordHash: bcrypt.hashSync(pharmacistPassword, 12), tokenVersion: 0, createdAt: now, updatedAt: now,
+    }] : []),
   ];
 
   return {
@@ -128,6 +123,7 @@ export function loadDatabase(): DatabaseSchema {
       // Ensure all fields exist
       if (!dbInstance!.settings) dbInstance!.settings = initialSettings;
       if (!dbInstance!.users) dbInstance!.users = [];
+      dbInstance!.users = dbInstance!.users.map((user) => ({ ...user, tokenVersion: user.tokenVersion ?? 0 }));
       if (!dbInstance!.categories || dbInstance!.categories.length === 0) dbInstance!.categories = initialCategories;
       if (!dbInstance!.products || dbInstance!.products.length === 0) dbInstance!.products = initialProducts;
       if (!dbInstance!.services || dbInstance!.services.length === 0) dbInstance!.services = initialServices;
@@ -161,20 +157,33 @@ export function saveDatabase(): void {
 
 // ----------------- AUTHENTICATION -----------------
 
-export function generateToken(user: User): string {
+export function generateToken(user: User, tokenVersion = 0): string {
   return jwt.sign(
-    { id: user.id, email: user.email, role: user.role, fullName: user.fullName },
+    { id: user.id, email: user.email, role: user.role, fullName: user.fullName, tokenVersion },
     JWT_SECRET,
     { expiresIn: '7d' }
   );
 }
 
-export function verifyToken(token: string): { id: string; email: string; role: string; fullName: string } | null {
+export function verifyToken(token: string): { id: string; email: string; role: string; fullName: string; tokenVersion?: number } | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as { id: string; email: string; role: string; fullName: string };
+    const decoded = jwt.verify(token, JWT_SECRET) as { id: string; email: string; role: string; fullName: string; tokenVersion?: number };
+    const db = loadDatabase();
+    const user = db.users.find((candidate) => candidate.id === decoded.id);
+    if (!user || (user.tokenVersion ?? 0) !== (decoded.tokenVersion ?? 0)) return null;
+    return decoded;
   } catch (err) {
     return null;
   }
+}
+
+export function revokeUserTokens(userId: string): void {
+  const db = loadDatabase();
+  const user = db.users.find((candidate) => candidate.id === userId);
+  if (!user) return;
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;
+  user.updatedAt = new Date().toISOString();
+  saveDatabase();
 }
 
 export function sanitizeUser(user: UserRecord): User {
@@ -207,6 +216,7 @@ export function registerUser(userData: {
     address: userData.address?.trim() || '',
     role: 'customer',
     passwordHash,
+    tokenVersion: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -215,7 +225,7 @@ export function registerUser(userData: {
   saveDatabase();
 
   const safe = sanitizeUser(newUser);
-  const token = generateToken(safe);
+  const token = generateToken(safe, newUser.tokenVersion ?? 0);
   return { user: safe, token };
 }
 
@@ -234,7 +244,7 @@ export function loginUser(email: string, password: string): { user: User; token:
   }
 
   const safe = sanitizeUser(user);
-  const token = generateToken(safe);
+  const token = generateToken(safe, user.tokenVersion ?? 0);
   return { user: safe, token };
 }
 
@@ -512,7 +522,7 @@ export function createOrder(data: {
 
   // Generate unique human-readable order number e.g. "GFP-2026-7842"
   const randomDigits = Math.floor(1000 + Math.random() * 9000);
-  const orderNumber = `GFP-2026-${randomDigits}`;
+  const orderNumber = `GFP-${new Date().getFullYear()}-${randomDigits}`;
 
   // Atomic Stock Deduction
   for (const item of data.items) {
@@ -773,7 +783,7 @@ export function createPrescription(data: {
   }
 
   const randomDigits = Math.floor(1000 + Math.random() * 9000);
-  const prescriptionNumber = `RX-2026-${randomDigits}`;
+  const prescriptionNumber = `RX-${new Date().getFullYear()}-${randomDigits}`;
 
   const newPrescription: Prescription = {
     id: `rx-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
@@ -880,7 +890,7 @@ export function createAppointment(data: {
   const serviceName = service ? service.name : 'General Pharmacy Consultation';
 
   const randomDigits = Math.floor(1000 + Math.random() * 9000);
-  const appointmentNumber = `APT-2026-${randomDigits}`;
+  const appointmentNumber = `APT-${new Date().getFullYear()}-${randomDigits}`;
 
   const newAppointment: Appointment = {
     id: `apt-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
