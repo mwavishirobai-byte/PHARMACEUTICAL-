@@ -1,0 +1,6 @@
+{
+  "name": "Gods Favor Pharmacy",
+  "description": "Production pharmacy platform for Gods Favor Pharmacy in Kitale Town, Kenya featuring medicine catalog, prescription orders, doctor consultations, appointments, and Pochi la Biashara payments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
