@@ -3,9 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 
-// Vercel invokes this function from /var/task/api. Import the actual server
-// file explicitly; importing '../server' is treated as a directory by the
-// ESM resolver in the deployed function and causes ERR_UNSUPPORTED_DIR_IMPORT.
 const originalFs = {
   existsSync: fs.existsSync,
   mkdirSync: fs.mkdirSync,
@@ -31,7 +28,6 @@ function redirectDataPath(value: any): any {
 (fs as any).writeFileSync = (value: any, ...args: any[]) => originalFs.writeFileSync(redirectDataPath(value), ...args);
 (fs as any).renameSync = (oldValue: any, newValue: any) => originalFs.renameSync(redirectDataPath(oldValue), redirectDataPath(newValue));
 
-// Skip only the existing SPA catch-all while booting the API function.
 const originalGet = express.application.get;
 express.application.get = function (...args: any[]) {
   if (args[0] === '*') return this;
@@ -51,7 +47,10 @@ http.Server.prototype.listen = function (...args: any[]) {
 } as typeof http.Server.prototype.listen;
 
 try {
-  await import('../server.ts');
+  // server.ts is compiled to CommonJS as dist/server.cjs by the existing
+  // build command. Loading that compiled entrypoint avoids Vercel's ESM
+  // directory resolution and avoids importing a raw TypeScript file.
+  await import('../dist/server.cjs');
 } finally {
   http.Server.prototype.listen = originalListen;
   express.application.get = originalGet;
