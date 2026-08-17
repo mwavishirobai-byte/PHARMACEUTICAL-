@@ -1,32 +1,5 @@
 import http from 'node:http';
-import fs from 'node:fs';
-import path from 'node:path';
 import express from 'express';
-
-const originalFs = {
-  existsSync: fs.existsSync,
-  mkdirSync: fs.mkdirSync,
-  readFileSync: fs.readFileSync,
-  writeFileSync: fs.writeFileSync,
-  renameSync: fs.renameSync,
-};
-
-const VERCEL_DATA_DIR = '/tmp/gods-favor-pharmacy-data';
-
-function redirectDataPath(value: any): any {
-  if (typeof value !== 'string') return value;
-  const normalized = path.posix.normalize(value.replace(/\\/g, '/'));
-  const marker = '/data/';
-  const index = normalized.indexOf(marker);
-  if (index === -1) return value;
-  return path.join(VERCEL_DATA_DIR, normalized.slice(index + marker.length));
-}
-
-(fs as any).existsSync = (value: any) => originalFs.existsSync(redirectDataPath(value));
-(fs as any).mkdirSync = (value: any, options?: any) => originalFs.mkdirSync(redirectDataPath(value), options);
-(fs as any).readFileSync = (value: any, ...args: any[]) => originalFs.readFileSync(redirectDataPath(value), ...args);
-(fs as any).writeFileSync = (value: any, ...args: any[]) => originalFs.writeFileSync(redirectDataPath(value), ...args);
-(fs as any).renameSync = (oldValue: any, newValue: any) => originalFs.renameSync(redirectDataPath(oldValue), redirectDataPath(newValue));
 
 const originalGet = express.application.get;
 express.application.get = function (...args: any[]) {
@@ -38,18 +11,17 @@ let capturedServer: http.Server | undefined;
 const originalListen = http.Server.prototype.listen;
 http.Server.prototype.listen = function (...args: any[]) {
   capturedServer = this;
-  const last = args[args.length - 1];
-  if (typeof last === 'function') {
+  const callback = args[args.length - 1];
+  if (typeof callback === 'function') {
     args.pop();
-    process.nextTick(last);
+    process.nextTick(callback);
   }
   return this;
 } as typeof http.Server.prototype.listen;
 
 try {
-  // server.ts is compiled to CommonJS as dist/server.cjs by the existing
-  // build command. Loading that compiled entrypoint avoids Vercel's ESM
-  // directory resolution and avoids importing a raw TypeScript file.
+  // The existing build produces dist/server.cjs. Loading that compiled
+  // CommonJS entrypoint avoids Vercel's ESM directory-resolution failure.
   await import('../dist/server.cjs');
 } finally {
   http.Server.prototype.listen = originalListen;
