@@ -1,4 +1,3 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import express from 'express';
 
 let app: express.Express | undefined;
@@ -19,6 +18,6 @@ if (!app) {
   throw new Error('Express application failed to initialize.');
 }
 
-export default function handler(req: VercelRequest, res: VercelResponse) {
+export default function handler(req: any, res: any) {
   return app!(req, res);
 }
