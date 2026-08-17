@@ -16,7 +16,7 @@ http.Server.prototype.listen = function (...args: any[]) {
   return this;
 } as typeof http.Server.prototype.listen;
 
-await import('../server.ts');
+await import('../server');
 
 http.Server.prototype.listen = originalListen;
 
