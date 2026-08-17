@@ -3,10 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 
-// Vercel functions have a writable /tmp filesystem, while the existing
-// pharmacy JSON database uses <project>/data. Redirect only that database
-// directory to /tmp so the existing backend can boot without changing its
-// data model or route logic.
+// Vercel invokes this function from /var/task/api. Import the actual server
+// file explicitly; importing '../server' is treated as a directory by the
+// ESM resolver in the deployed function and causes ERR_UNSUPPORTED_DIR_IMPORT.
 const originalFs = {
   existsSync: fs.existsSync,
   mkdirSync: fs.mkdirSync,
@@ -32,9 +31,7 @@ function redirectDataPath(value: any): any {
 (fs as any).writeFileSync = (value: any, ...args: any[]) => originalFs.writeFileSync(redirectDataPath(value), ...args);
 (fs as any).renameSync = (oldValue: any, newValue: any) => originalFs.renameSync(redirectDataPath(oldValue), redirectDataPath(newValue));
 
-// The existing server uses Express 4-style `app.get('*', ...)`. Express 5
-// rejects that pattern during startup. Skip only that SPA fallback inside
-// the API function; Vercel serves the frontend separately.
+// Skip only the existing SPA catch-all while booting the API function.
 const originalGet = express.application.get;
 express.application.get = function (...args: any[]) {
   if (args[0] === '*') return this;
@@ -54,7 +51,7 @@ http.Server.prototype.listen = function (...args: any[]) {
 } as typeof http.Server.prototype.listen;
 
 try {
-  await import('../server');
+  await import('../server.ts');
 } finally {
   http.Server.prototype.listen = originalListen;
   express.application.get = originalGet;
