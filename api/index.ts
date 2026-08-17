@@ -1,14 +1,48 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 
-// The existing Express server was written for a long-running Node process.
-// Vercel invokes it as a Serverless Function. Capture listen() so no TCP
-// socket is opened, and ignore the production SPA catch-all route because
-// Vercel serves the built frontend separately.
+// Vercel functions have a writable /tmp filesystem, while the existing
+// pharmacy JSON database uses <project>/data. Redirect only that database
+// directory to /tmp so the existing backend can boot without changing its
+// data model or route logic.
+const originalFs = {
+  existsSync: fs.existsSync,
+  mkdirSync: fs.mkdirSync,
+  readFileSync: fs.readFileSync,
+  writeFileSync: fs.writeFileSync,
+  renameSync: fs.renameSync,
+};
+
+const VERCEL_DATA_DIR = '/tmp/gods-favor-pharmacy-data';
+
+function redirectDataPath(value: any): any {
+  if (typeof value !== 'string') return value;
+  const normalized = path.posix.normalize(value.replace(/\\/g, '/'));
+  const marker = '/data/';
+  const index = normalized.indexOf(marker);
+  if (index === -1) return value;
+  return path.join(VERCEL_DATA_DIR, normalized.slice(index + marker.length));
+}
+
+(fs as any).existsSync = (value: any) => originalFs.existsSync(redirectDataPath(value));
+(fs as any).mkdirSync = (value: any, options?: any) => originalFs.mkdirSync(redirectDataPath(value), options);
+(fs as any).readFileSync = (value: any, ...args: any[]) => originalFs.readFileSync(redirectDataPath(value), ...args);
+(fs as any).writeFileSync = (value: any, ...args: any[]) => originalFs.writeFileSync(redirectDataPath(value), ...args);
+(fs as any).renameSync = (oldValue: any, newValue: any) => originalFs.renameSync(redirectDataPath(oldValue), redirectDataPath(newValue));
+
+// The existing server uses Express 4-style `app.get('*', ...)`. Express 5
+// rejects that pattern during startup. Skip only that SPA fallback inside
+// the API function; Vercel serves the frontend separately.
+const originalGet = express.application.get;
+express.application.get = function (...args: any[]) {
+  if (args[0] === '*') return this;
+  return originalGet.apply(this, args as any);
+} as typeof express.application.get;
+
 let capturedServer: http.Server | undefined;
 const originalListen = http.Server.prototype.listen;
-const originalGet = express.application.get;
-
 http.Server.prototype.listen = function (...args: any[]) {
   capturedServer = this;
   const last = args[args.length - 1];
@@ -18,16 +52,6 @@ http.Server.prototype.listen = function (...args: any[]) {
   }
   return this;
 } as typeof http.Server.prototype.listen;
-
-// Express 5 rejects the legacy app.get('*', ...) syntax with a
-// path-to-regexp error. That route only serves the SPA fallback and is not
-// needed inside this API function, so skip only that one route.
-express.application.get = function (...args: any[]) {
-  if (args[0] === '*') {
-    return this;
-  }
-  return originalGet.apply(this, args as any);
-} as typeof express.application.get;
 
 try {
   await import('../server');
